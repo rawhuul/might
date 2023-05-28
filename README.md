@@ -31,6 +31,10 @@ The following features are planned for future updates:
 - `serde_json` crate
 - `rustyline` crate
 
+## Screenshot
+
+![Screenshot](/screenshots/screenshot1.png?raw=true "Screenshot")
+
 ## Installation
 
 1. Install Rust by following the instructions at [rustup.rs](https://rustup.rs/).
