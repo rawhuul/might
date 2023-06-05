@@ -1,66 +1,68 @@
 # May
 
-May is application for testing APIs. It allows you to send HTTP requests (GET and POST) to a specified URL and receive JSON responses. The app uses the `reqwest` crate for making HTTP requests and the `serde_json` crate for handling JSON data.
-
-## Usage
-
-1. Enter the desired HTTP request in the format of `METHOD URL`. For example, to send a GET request to `https://api.example.com/endpoint`, type: `GET https://api.example.com/endpoint`.
-
-2. For POST requests, the app will prompt for a JSON body. Enter the JSON body to include in the request.
-
-3. The app will display the response in a pretty-printed JSON format.
-
-4. To exit the app, type `exit`.
+A simple command-line application that allows users to send HTTP requests and view the response, making it convenient for testing APIs. The tool supports various HTTP methods like `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`. It also provides the option to pretty-print the response in JSON format or display it as a table.
 
 ## Features
 
-### Upcoming Features
+1. Send HTTP requests:
+   - `GET`: Retrieve data from a specified URL.
+   - `POST`: Send data to a specified URL.
+   - `PUT`: Update data at a specified URL.
+   - `PATCH`: Partially update data at a specified URL.
+   - `DELETE`: Delete data at a specified URL.
 
-The following features are planned for future updates:
+2. Interactive REPL (Read-Eval-Print Loop):
+   - Users can interactively enter commands in the tool.
+   - Commands are executed and responses are displayed in real-time.
 
-- Syntax highlighting: Enhance the user interface with syntax highlighting for better readability.
-- Up/down cursor with history: Allow navigation through command history using the up and down arrow keys.
-- Session history support: Maintain a history of API requests and responses for the current session.
-- Addition of PUT, PATCH, and DELETE methods: Extend support for additional HTTP methods.
-- Session management: Enable session management to save and load previous sessions for easy recall.
+3. History:
+   - The tool keeps a history of previous requests and responses.
+   - Users can view the session history to see the details of past requests and responses.
 
-## Requirements
+4. Pretty-print response:
+   - The tool provides the option to pretty-print the JSON response.
+   - Users can choose between a table format or a formatted JSON string.
 
-- Rust (I'm using `1.71.0-nightly`)
-- `reqwest` crate
-- `serde_json` crate
-- `rustyline` crate
+5. Error handling:
+   - The tool provides error handling for various scenarios, such as invalid methods or URLs, failed requests, etc.
 
-## Screenshot
+6. History persistence:
+   - The tool saves the session history to a file (`history.txt`) and loads it on startup.
+   - This ensures that the history is preserved between different tool sessions.
 
-![Screenshot](/screenshots/screenshot1.png?raw=true "Screenshot")
+## Usage
 
-## Installation
+1. Start the tool.
+2. Enter commands in the following format: `<HTTP_METHOD> <URL>`.
+   - For example: `GET https://api.example.com/data`.
+3. View the response.
+   - If the response is JSON, it can be displayed as a table or a formatted string.
+   - The session history can be accessed with the command `history`.
+4. Continue entering commands or type `exit` to exit the tool.
 
-1. Install Rust by following the instructions at [rustup.rs](https://rustup.rs/).
+## Command-line Arguments
 
-2. Clone this repository:
+The tool supports the following command-line arguments:
 
-   ```bash
-   git clone https://github.com/basicfunc/may.git
-   ```
+- `-j` or `--json`: Outputs the response in JSON format.
 
-3. Change to the project directory:
+Example usage: `may -j`
 
-   ```bash
-   cd may
-   ```
+## Dependencies
 
-4. Build and run the application:
+The tool relies on the following external crates:
 
-   ```bash
-   cargo run
-   ```
+- `argh`: Command-line argument parsing.
+- `json_to_table`: Converts JSON data to a table format.
+- `reqwest`: HTTP client for sending requests.
+- `rustyline`: Library for creating an interactive command-line REPL.
+- `serde_json`: JSON serialization and deserialization.
+- `tabled`: Formats tabular data.
 
-## Contributions
+## Credits
 
-Contributions to this project are welcome! Feel free to open issues or submit pull requests with improvements, bug fixes, or new features.
+This tool was developed using the Rust programming language and various open-source crates.
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE). Feel free to modify and enhance the project as needed.
+This tool is licensed under the [MIT License](LICENSE).
