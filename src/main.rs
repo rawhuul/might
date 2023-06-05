@@ -1,6 +1,6 @@
-use std::format;
 use std::io::Write;
-use std::{collections::HashMap, print};
+use std::collections::HashMap;
+use std::time::Instant;
 
 use ansi_term;
 use ansi_term::Colour;
@@ -104,6 +104,7 @@ fn send_request(
     pretty_print: bool,
 ) {
     let client = Client::new();
+    let start_time = Instant::now();
 
     let request = match method {
         "GET" => client.get(url),
@@ -126,8 +127,11 @@ fn send_request(
 
     match response {
         Ok(response) => {
+            let end_time = Instant::now();
+
+            println!("{} {:?}", Colour::White.bold().paint("Response Time:"),end_time.duration_since(start_time));
             println!("{}", handle_status_code(response.status()));
-            
+
             let json: Value;
 
             match response.json() {
@@ -177,7 +181,7 @@ fn handle_status_code(status: StatusCode) -> String{
         _ => Colour::White.paint(s),
     };
 
-    format!("{} {}\n{}", Colour::White.bold().paint("Status:"), status, p)
+    format!("{} {} ({})", Colour::White.bold().paint("Status:"), status, p)
 }
 
 fn pprint(json: Value, table: bool) {
