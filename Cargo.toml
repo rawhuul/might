@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+argh = "0.1.10"
 json_to_table = { version = "0.5.0", features = ["color"] }
 reqwest = { version = "0.11.18", features = ["blocking", "json"] }
 rustyline = { version = "11.0.0", features = ["case_insensitive_history_search", "derive", "with-fuzzy"] }

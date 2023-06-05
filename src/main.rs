@@ -1,43 +1,45 @@
-use std::collections::HashMap;
 use std::io::Write;
+use std::{collections::HashMap, print};
 
+use argh::FromArgs;
 use json_to_table::json_to_table;
 use reqwest::blocking::Client;
-use rustyline::{DefaultEditor, Result, error::ReadlineError};
+use rustyline::{config::Configurer, error::ReadlineError, DefaultEditor, Result};
 use serde_json::{json, Value};
-use tabled::settings::{style::RawStyle, Style, Color};
+use tabled::settings::{style::RawStyle, Color, Style};
 
 #[derive(Default)]
 struct SessionHistory {
     history: HashMap<String, Value>,
 }
 
-fn repl(session: &mut SessionHistory) {
+fn repl(session: &mut SessionHistory, pretty_print: bool) {
     let mut rl = DefaultEditor::new().unwrap();
 
     if rl.load_history("history.txt").is_err() {
         println!("No previous history.");
     }
 
+    rl.set_color_mode(rustyline::ColorMode::Enabled);
     loop {
         let readline = rl.readline(">>> ");
         match readline {
             Ok(input) => {
                 let input = input.trim();
 
-                if input.is_empty() {
-                    continue;
-                }
+                if input.is_empty() {continue};
+
+                if input == "exit" || input == "EXIT" || input == "Exit"{break;}
 
                 _ = rl.add_history_entry(input);
 
                 match input {
                     "history" | "History" | "HISTORY" => show_history(session),
-
                     _ => {
-                        process_input(input, session);
+                        process_input(input, session, pretty_print);
                     }
                 }
+
             }
             Err(ReadlineError::Interrupted | ReadlineError::Eof) => {
                 println!("Goodbye!");
@@ -52,28 +54,41 @@ fn repl(session: &mut SessionHistory) {
     _ = rl.save_history("history.txt");
 }
 
-fn process_input(input: &str, session: &mut SessionHistory) {
-    let mut parts = input.splitn(2, ' ');
-    let method = parts.next().unwrap();
-    let url = parts.next().unwrap();
+fn process_input(input: &str, session: &mut SessionHistory, pretty_print: bool) {
+    let parts: Vec<&str> = input.split(' ').collect();
+
+    if parts.len() != 2 {
+        println!("Expected 2 arguments, found {}!", parts.len());
+        return;
+    }
+
+    let method = parts[0];
+    let url = parts[1];
 
     match method {
-        "GET" => send_request("GET", url, None, session),
+        "GET" => send_request("GET", url, None, session, pretty_print),
         "POST" | "PUT" | "PATCH" => {
             print!("Body: ");
             std::io::stdout().flush().unwrap();
             let mut body = String::new();
             std::io::stdin().read_line(&mut body).unwrap();
-            send_request(method, url, Some(body), session);
+            send_request(method, url, Some(body), session, pretty_print);
         }
-        "DELETE" => send_request("DELETE", url, None, session),
+
+        "DELETE" => send_request("DELETE", url, None, session, pretty_print),
         _ => {
             println!("Invalid method: {}", method);
         }
     }
 }
 
-fn send_request(method: &str, url: &str, body: Option<String>, session: &mut SessionHistory) {
+fn send_request(
+    method: &str,
+    url: &str,
+    body: Option<String>,
+    session: &mut SessionHistory,
+    pretty_print: bool,
+) {
     let client = Client::new();
 
     let request = match method {
@@ -97,36 +112,53 @@ fn send_request(method: &str, url: &str, body: Option<String>, session: &mut Ses
 
     match response {
         Ok(response) => {
-            let json: Value = response.json().unwrap();
+            let json: Value;
+
+            match response.json() {
+                Ok(x) => json = x,
+                Err(e) => {
+                    println!("{e}");
+                    return;
+                }
+            }
+
             session
                 .history
                 .insert(format!("{} {}", method, url), json.clone());
 
-            // let pretty_json = serde_json::to_string_pretty(&json).unwrap();
-            let mut json = json_to_table(&json);
-
-            let mut style = RawStyle::from(Style::rounded());
-            style
-                .set_color_top(Color::FG_RED)
-                .set_color_bottom(Color::FG_CYAN)
-                .set_color_left(Color::FG_BLUE)
-                .set_color_right(Color::FG_GREEN)
-                .set_color_corner_top_left(Color::FG_BLUE)
-                .set_color_corner_top_right(Color::FG_RED)
-                .set_color_corner_bottom_left(Color::FG_CYAN)
-                .set_color_corner_bottom_right(Color::FG_GREEN)
-                .set_color_intersection_bottom(Color::FG_CYAN)
-                .set_color_intersection_top(Color::FG_RED)
-                .set_color_intersection_right(Color::FG_GREEN)
-                .set_color_intersection_left(Color::FG_BLUE)
-                .set_color_intersection(Color::FG_MAGENTA)
-                .set_color_horizontal(Color::FG_MAGENTA)
-                .set_color_vertical(Color::FG_MAGENTA);
-
-            println!("{}", json.with(style));
+            pprint(json, pretty_print);
         }
         Err(err) => {
             println!("Error: {}", err);
+        }
+    }
+}
+
+fn pprint(json: Value, table: bool) {
+    if table {
+        let mut style = RawStyle::from(Style::rounded());
+        style
+            .set_color_top(Color::FG_RED)
+            .set_color_bottom(Color::FG_CYAN)
+            .set_color_left(Color::FG_BLUE)
+            .set_color_right(Color::FG_GREEN)
+            .set_color_corner_top_left(Color::FG_BLUE)
+            .set_color_corner_top_right(Color::FG_RED)
+            .set_color_corner_bottom_left(Color::FG_CYAN)
+            .set_color_corner_bottom_right(Color::FG_GREEN)
+            .set_color_intersection_bottom(Color::FG_CYAN)
+            .set_color_intersection_top(Color::FG_RED)
+            .set_color_intersection_right(Color::FG_GREEN)
+            .set_color_intersection_left(Color::FG_BLUE)
+            .set_color_intersection(Color::FG_MAGENTA)
+            .set_color_horizontal(Color::FG_MAGENTA)
+            .set_color_vertical(Color::FG_MAGENTA);
+
+        println!("{}", json_to_table(&json).with(style));
+    } else {
+        match serde_json::to_string_pretty(&json) {
+            Ok(result) => print!("{result}"),
+            Err(e) => print!("{e}"),
         }
     }
 }
@@ -145,7 +177,15 @@ fn show_history(session: &SessionHistory) {
     }
 }
 
+#[derive(FromArgs)]
+/// Simple command-line application that allows users to send HTTP requests and view the response, to test APIs.
+struct Args {
+    #[argh(switch, short = 'j', description = "outputs in JSON")]
+    json: bool,
+}
+
 fn main() {
+    let args: Args = argh::from_env();
     let mut session = SessionHistory::default();
-    repl(&mut session);
+    repl(&mut session, args.json);
 }
