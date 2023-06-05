@@ -1,9 +1,13 @@
+use std::format;
 use std::io::Write;
 use std::{collections::HashMap, print};
 
+use ansi_term;
+use ansi_term::Colour;
 use argh::FromArgs;
 use json_to_table::json_to_table;
 use reqwest::blocking::Client;
+use reqwest::StatusCode;
 use rustyline::{config::Configurer, error::ReadlineError, DefaultEditor, Result};
 use serde_json::{json, Value};
 use tabled::settings::{style::RawStyle, Color, Style};
@@ -20,16 +24,27 @@ fn repl(session: &mut SessionHistory, pretty_print: bool) {
         println!("No previous history.");
     }
 
+    if ansi_term::enable_ansi_support().is_err() {
+        println!("Your system doesn't support ansi_colors.");
+    }
+
     rl.set_color_mode(rustyline::ColorMode::Enabled);
+
+    let prompt = format!(">>> ");
+
     loop {
-        let readline = rl.readline(">>> ");
+        let readline = rl.readline(&prompt);
         match readline {
             Ok(input) => {
                 let input = input.trim();
 
-                if input.is_empty() {continue};
+                if input.is_empty() {
+                    continue;
+                };
 
-                if input == "exit" || input == "EXIT" || input == "Exit"{break;}
+                if input == "exit" || input == "EXIT" || input == "Exit" {
+                    break;
+                }
 
                 _ = rl.add_history_entry(input);
 
@@ -39,7 +54,6 @@ fn repl(session: &mut SessionHistory, pretty_print: bool) {
                         process_input(input, session, pretty_print);
                     }
                 }
-
             }
             Err(ReadlineError::Interrupted | ReadlineError::Eof) => {
                 println!("Goodbye!");
@@ -112,6 +126,8 @@ fn send_request(
 
     match response {
         Ok(response) => {
+            println!("{}", handle_status_code(response.status()));
+            
             let json: Value;
 
             match response.json() {
@@ -132,6 +148,36 @@ fn send_request(
             println!("Error: {}", err);
         }
     }
+}
+
+fn handle_status_code(status: StatusCode) -> String{
+    let p = match status {
+        StatusCode::OK => {
+            format!("Success!")
+        }
+        StatusCode::NOT_FOUND => {
+            format!("Resource Not Found!")
+        }
+        StatusCode::UNAUTHORIZED => {
+            format!("Unauthorized! Please provide credentials.")
+        }
+        StatusCode::INTERNAL_SERVER_ERROR => {
+            format!("Internal Server Error! Retrying request...")
+        }
+        _ => format!(""),
+    };
+
+    let s = format!("{}", status);
+
+    let status = match status.as_u16() {
+        200..=299 => Colour::Green.paint(s),
+        300..=399 => Colour::Cyan.paint(s),
+        400..=499 => Colour::Yellow.paint(s),
+        500..=599 => Colour::Red.paint(s),
+        _ => Colour::White.paint(s),
+    };
+
+    format!("{} {}\n{}", Colour::White.bold().paint("Status:"), status, p)
 }
 
 fn pprint(json: Value, table: bool) {
@@ -187,5 +233,5 @@ struct Args {
 fn main() {
     let args: Args = argh::from_env();
     let mut session = SessionHistory::default();
-    repl(&mut session, args.json);
+    repl(&mut session, !args.json);
 }
