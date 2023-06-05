@@ -1,5 +1,5 @@
-use std::io::Write;
 use std::collections::HashMap;
+use std::io::Write;
 use std::time::Instant;
 
 use ansi_term;
@@ -128,8 +128,18 @@ fn send_request(
     match response {
         Ok(response) => {
             let end_time = Instant::now();
+            let duration = end_time.duration_since(start_time);
 
-            println!("{} {:?}", Colour::White.bold().paint("Response Time:"),end_time.duration_since(start_time));
+            println!(
+                "{} {}",
+                Colour::White.bold().paint("Response Time:"),
+                format_duration(duration)
+            );
+            println!(
+                "{} {}",
+                Colour::White.bold().paint("Response Size:"),
+                format_response_size(response.content_length())
+            );
             println!("{}", handle_status_code(response.status()));
 
             let json: Value;
@@ -154,7 +164,7 @@ fn send_request(
     }
 }
 
-fn handle_status_code(status: StatusCode) -> String{
+fn handle_status_code(status: StatusCode) -> String {
     let p = match status {
         StatusCode::OK => {
             format!("Success!")
@@ -181,7 +191,44 @@ fn handle_status_code(status: StatusCode) -> String{
         _ => Colour::White.paint(s),
     };
 
-    format!("{} {} ({})", Colour::White.bold().paint("Status:"), status, p)
+    format!(
+        "{} {} ({})",
+        Colour::White.bold().paint("Status:"),
+        status,
+        p
+    )
+}
+
+
+fn format_duration(duration: std::time::Duration) -> String {
+    let secs = duration.as_secs();
+    let millis = duration.subsec_millis();
+
+    if secs >= 60 {
+        let mins = secs / 60;
+        format!("{} min {}.{:03} s", mins, secs % 60, millis)
+    } else if secs > 0 {
+        format!("{}.{:03} s", secs, millis)
+    } else {
+        format!("{} ms", millis)
+    }
+}
+
+fn format_response_size(size: Option<u64>) -> String {
+    match size {
+        Some(size) => {
+            if size >= 1 << 30 {
+                format!("{:.2} GB", size as f64 / (1 << 30) as f64)
+            } else if size >= 1 << 20 {
+                format!("{:.2} MB", size as f64 / (1 << 20) as f64)
+            } else if size >= 1 << 10 {
+                format!("{:.2} KB", size as f64 / (1 << 10) as f64)
+            } else {
+                format!("{} bytes", size)
+            }
+        }
+        None => "Unknown".to_string(),
+    }
 }
 
 fn pprint(json: Value, table: bool) {
