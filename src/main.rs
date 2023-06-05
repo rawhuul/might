@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::io::Write;
 
+use json_to_table::json_to_table;
 use reqwest::blocking::Client;
-use rustyline::error::ReadlineError;
-use rustyline::{DefaultEditor, Result};
+use rustyline::{DefaultEditor, Result, error::ReadlineError};
 use serde_json::{json, Value};
+use tabled::settings::{style::RawStyle, Style, Color};
 
 #[derive(Default)]
 struct SessionHistory {
@@ -13,7 +14,10 @@ struct SessionHistory {
 
 fn repl(session: &mut SessionHistory) {
     let mut rl = DefaultEditor::new().unwrap();
-    let mut history: Vec<String> = Vec::new();
+
+    if rl.load_history("history.txt").is_err() {
+        println!("No previous history.");
+    }
 
     loop {
         let readline = rl.readline(">>> ");
@@ -26,23 +30,8 @@ fn repl(session: &mut SessionHistory) {
                 }
 
                 _ = rl.add_history_entry(input);
-                history.push(input.to_string());
 
                 match input {
-                    "\x1b[A" => {
-                        // Up arrow key
-                        if let Some(prev_command) = history.get(history.len() - 2) {
-                            println!(">>> {}", prev_command);
-                            repl(session);
-                        }
-                    }
-                    "\x1b[B" => {
-                        // Down arrow key
-                        if let Some(next_command) = history.get(history.len() - 1) {
-                            println!(">>> {}", next_command);
-                            repl(session);
-                        }
-                    }
                     "history" | "History" | "HISTORY" => show_history(session),
 
                     _ => {
@@ -60,6 +49,7 @@ fn repl(session: &mut SessionHistory) {
             }
         }
     }
+    _ = rl.save_history("history.txt");
 }
 
 fn process_input(input: &str, session: &mut SessionHistory) {
@@ -108,10 +98,32 @@ fn send_request(method: &str, url: &str, body: Option<String>, session: &mut Ses
     match response {
         Ok(response) => {
             let json: Value = response.json().unwrap();
-            let request_string = format!("{} {}", method, url);
-            session.history.insert(request_string, json.clone());
-            let pretty_json = serde_json::to_string_pretty(&json).unwrap();
-            println!("{}", pretty_json);
+            session
+                .history
+                .insert(format!("{} {}", method, url), json.clone());
+
+            // let pretty_json = serde_json::to_string_pretty(&json).unwrap();
+            let mut json = json_to_table(&json);
+
+            let mut style = RawStyle::from(Style::rounded());
+            style
+                .set_color_top(Color::FG_RED)
+                .set_color_bottom(Color::FG_CYAN)
+                .set_color_left(Color::FG_BLUE)
+                .set_color_right(Color::FG_GREEN)
+                .set_color_corner_top_left(Color::FG_BLUE)
+                .set_color_corner_top_right(Color::FG_RED)
+                .set_color_corner_bottom_left(Color::FG_CYAN)
+                .set_color_corner_bottom_right(Color::FG_GREEN)
+                .set_color_intersection_bottom(Color::FG_CYAN)
+                .set_color_intersection_top(Color::FG_RED)
+                .set_color_intersection_right(Color::FG_GREEN)
+                .set_color_intersection_left(Color::FG_BLUE)
+                .set_color_intersection(Color::FG_MAGENTA)
+                .set_color_horizontal(Color::FG_MAGENTA)
+                .set_color_vertical(Color::FG_MAGENTA);
+
+            println!("{}", json.with(style));
         }
         Err(err) => {
             println!("Error: {}", err);
@@ -120,7 +132,7 @@ fn send_request(method: &str, url: &str, body: Option<String>, session: &mut Ses
 }
 
 fn show_history(session: &SessionHistory) {
-    if session.history.len() == 0{
+    if session.history.len() == 0 {
         println!("No History :(");
         return;
     }
