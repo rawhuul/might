@@ -1,22 +1,107 @@
 use std::collections::HashMap;
 use std::io::Write;
+use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
 use ansi_term::{enable_ansi_support, Colour};
 use argh::FromArgs;
 use json_to_table::json_to_table;
+use lru::LruCache;
 use reqwest::{blocking::Client, StatusCode};
 use rustyline::{config::Configurer, error::ReadlineError, DefaultEditor};
 use serde_json::Value;
 use tabled::settings::{style::RawStyle, Color, Style};
 
-#[derive(Default)]
-struct SessionHistory {
+struct Cache {
+    cache: LruCache<String, (Value, Instant)>,
+    max_size: usize,
+    max_age: Duration,
+}
+
+impl Cache {
+    fn new(max_size: usize, max_age: Duration) -> Self {
+        Cache {
+            cache: LruCache::new(NonZeroUsize::new(max_size).unwrap()),
+            max_size,
+            max_age,
+        }
+    }
+
+    fn get(&mut self, key: &str) -> Option<Value> {
+        if let Some((value, timestamp)) = self.cache.get_mut(key) {
+            if timestamp.elapsed() <= self.max_age {
+                return Some(value.clone());
+            }
+        }
+        None
+    }
+
+    fn put(&mut self, key: String, value: Value) {
+        let timestamp = Instant::now();
+        self.cache.put(key, (value, timestamp));
+
+        if self.cache.len() > self.max_size {
+            self.cache.pop_lru();
+        }
+    }
+
+    fn remove_expired_entries(&mut self) {
+        let now = Instant::now();
+
+        let expired_keys: Vec<String> = self
+            .cache
+            .iter()
+            .filter(|(_, (_, timestamp))| now.duration_since(*timestamp) > self.max_age)
+            .map(|(key, _)| key.clone())
+            .collect();
+
+        for key in expired_keys {
+            self.cache.pop(&key);
+        }
+    }
+}
+
+struct Session {
+    cache: Cache,
+    cache_size: NonZeroUsize,
     history: HashMap<String, Value>,
+    pretty_print: bool,
     response_timeout: Duration,
 }
 
-fn repl(session: &mut SessionHistory, pretty_print: bool) {
+impl Session {
+    fn new(pretty_print: bool, response_timeout: Option<u64>, cache_size: Option<u64>) -> Self {
+        Session {
+            cache: Cache::new(100, Duration::from_secs(5)),
+            cache_size: match  cache_size {
+                Some(size) => NonZeroUsize::new(size.try_into().unwrap()).unwrap(),
+                None => NonZeroUsize::new(100).unwrap()
+            },
+            history: HashMap::new(),
+            pretty_print,
+            response_timeout: match response_timeout {
+                Some(timeout_secs) => Duration::from_secs(timeout_secs),
+                None => Duration::from_secs(30), // Default timeout of 30 seconds
+            },
+        }
+    }
+
+    fn show_history(&self) {
+        if self.history.len() == 0 {
+            println!("No History :(");
+            return;
+        }
+
+        println!("Session History:\n");
+        for (request, response) in &self.history {
+            let pretty_request = request.replace(" ", " | ");
+            let pretty_json = serde_json::to_string_pretty(&response).unwrap();
+            println!("Request: {pretty_request}\nResponse: {pretty_json}\n");
+        }
+    }
+}
+
+fn repl(session: &mut Session) {
     let mut rl = DefaultEditor::new().unwrap();
 
     if rl.load_history("history.txt").is_err() {
@@ -49,9 +134,9 @@ fn repl(session: &mut SessionHistory, pretty_print: bool) {
                 _ = rl.add_history_entry(input);
 
                 match input {
-                    "history" | "History" | "HISTORY" => show_history(session),
+                    "history" | "History" | "HISTORY" => session.show_history(),
                     _ => {
-                        process_input(input, session, pretty_print);
+                        process_input(input, session);
                     }
                 }
             }
@@ -68,11 +153,11 @@ fn repl(session: &mut SessionHistory, pretty_print: bool) {
     _ = rl.save_history("history.txt");
 }
 
-fn process_input(input: &str, session: &mut SessionHistory, pretty_print: bool) {
+fn process_input(input: &str, session: &mut Session) {
     let parts: Vec<&str> = input.split(' ').collect();
 
     if parts.len() != 2 {
-        println!("Expected 2 arguments, found {}!", parts.len());
+        println!("[ERROR]: Expected 2 arguments, found {}!", parts.len());
         return;
     }
 
@@ -80,29 +165,33 @@ fn process_input(input: &str, session: &mut SessionHistory, pretty_print: bool) 
     let url = parts[1];
 
     match method {
-        "GET" => send_request("GET", url, None, session, pretty_print),
+        "GET" => send_request("GET", url, None, session),
         "POST" | "PUT" | "PATCH" => {
             print!("Body: ");
             std::io::stdout().flush().unwrap();
             let mut body = String::new();
             std::io::stdin().read_line(&mut body).unwrap();
-            send_request(method, url, Some(body), session, pretty_print);
+            send_request(method, url, Some(body), session);
         }
 
-        "DELETE" => send_request("DELETE", url, None, session, pretty_print),
+        "DELETE" => send_request("DELETE", url, None, session),
         _ => {
             println!("[ERROR]: Invalid method: {}", method);
         }
     }
 }
 
-fn send_request(
-    method: &str,
-    url: &str,
-    body: Option<String>,
-    session: &mut SessionHistory,
-    pretty_print: bool,
-) {
+fn send_request(method: &str, url: &str, body: Option<String>, session: &mut Session) {
+    session.cache.remove_expired_entries();
+
+    let cache_key = format!("{} {}", method, url);
+
+    if let Some(cached_response) = session.cache.get(&cache_key) {
+        println!("[INFO] Using cached response");
+        pprint(&cached_response, session.pretty_print);
+        return;
+    }
+
     let client = Client::builder()
         .timeout(session.response_timeout)
         .build()
@@ -156,25 +245,23 @@ fn send_request(
                 }
             }
 
-            session
-                .history
-                .insert(format!("{} {}", method, url), json.clone());
+            session.history.insert(cache_key.clone(), json.clone());
+            session.cache.put(cache_key.clone(), json.clone());
 
-            pprint(json, pretty_print);
+            pprint(&json, session.pretty_print);
         }
         Err(err) => {
             let e = Colour::Red.dimmed().paint("[ERROR]");
 
             if err.is_timeout() {
                 println!(
-                    "{}: Response time exceeded the specified timeout of {} seconds.",
-                    e,
+                    "{e}: Response time exceeded the specified timeout of {} seconds.",
                     session.response_timeout.as_secs()
                 );
             } else if err.is_decode() {
-                println!("{}: Failed to decode response.", e);
+                println!("{e}: Failed to decode response.");
             } else {
-                println!("{}: {}", e, err);
+                println!("{e}: {err}");
             }
         }
     }
@@ -246,7 +333,7 @@ fn format_response_size(size: Option<u64>) -> String {
     }
 }
 
-fn pprint(json: Value, table: bool) {
+fn pprint(json: &Value, table: bool) {
     if table {
         let mut style = RawStyle::from(Style::rounded());
         style
@@ -275,38 +362,29 @@ fn pprint(json: Value, table: bool) {
     }
 }
 
-fn show_history(session: &SessionHistory) {
-    if session.history.len() == 0 {
-        println!("No History :(");
-        return;
-    }
-
-    println!("Session History:");
-    for (request, response) in &session.history {
-        let pretty_request = request.replace(" ", " | ");
-        let pretty_json = serde_json::to_string_pretty(&response).unwrap();
-        println!("Request: {pretty_request}\nResponse: {pretty_json}\n");
-    }
-}
-
 #[derive(FromArgs)]
 /// Simple command-line application that allows users to send HTTP requests and view the response, to test APIs.
 struct Args {
-    #[argh(option, short = 't', description = "response timeout in seconds (default: 30s)")]
+    #[argh(
+        option,
+        short = 't',
+        description = "response timeout in seconds (default: 30s)"
+    )]
     response_timeout: Option<u64>,
-    #[argh(switch, short = 'j', description = "outputs in JSON")]
+    #[argh(
+        option,
+        short = 'c',
+        description = "cache size (default: 100)"
+    )]
+    cache_size: Option<u64>,
+    #[argh(switch, short = 'j', description = "outputs in JSON (default: false)")]
     json: bool,
 }
 
 fn main() {
     let args: Args = argh::from_env();
 
-    let mut session = SessionHistory::default();
+    let mut session = Session::new(!args.json, args.response_timeout, args.cache_size);
 
-    session.response_timeout = match args.response_timeout {
-        Some(timeout_secs) => Duration::from_secs(timeout_secs),
-        None => Duration::from_secs(30), // Default timeout of 30 seconds
-    };
-
-    repl(&mut session, !args.json);
+    repl(&mut session);
 }
