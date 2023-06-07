@@ -1,31 +1,30 @@
 use std::collections::HashMap;
 use std::io::Write;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use ansi_term::enable_ansi_support;
-use ansi_term::Colour;
+use ansi_term::{enable_ansi_support, Colour};
 use argh::FromArgs;
 use json_to_table::json_to_table;
-use reqwest::blocking::Client;
-use reqwest::StatusCode;
+use reqwest::{blocking::Client, StatusCode};
 use rustyline::{config::Configurer, error::ReadlineError, DefaultEditor};
-use serde_json::{Value};
+use serde_json::Value;
 use tabled::settings::{style::RawStyle, Color, Style};
 
 #[derive(Default)]
 struct SessionHistory {
     history: HashMap<String, Value>,
+    response_timeout: Duration,
 }
 
 fn repl(session: &mut SessionHistory, pretty_print: bool) {
     let mut rl = DefaultEditor::new().unwrap();
 
     if rl.load_history("history.txt").is_err() {
-        println!("No previous history.");
+        println!("[INFO]: No previous history.");
     }
 
     if enable_ansi_support().is_err() {
-        println!("Your system doesn't support ansi_colors.");
+        println!("[ERROR]: Your system doesn't support ansi_colors.");
     }
 
     rl.set_color_mode(rustyline::ColorMode::Enabled);
@@ -43,6 +42,7 @@ fn repl(session: &mut SessionHistory, pretty_print: bool) {
                 };
 
                 if input == "exit" || input == "EXIT" || input == "Exit" {
+                    println!("[INFO]: Goodbye!");
                     break;
                 }
 
@@ -56,11 +56,11 @@ fn repl(session: &mut SessionHistory, pretty_print: bool) {
                 }
             }
             Err(ReadlineError::Interrupted | ReadlineError::Eof) => {
-                println!("Goodbye!");
+                println!("[INFO]: Goodbye!");
                 break;
             }
             Err(err) => {
-                println!("Error: {:?}", err);
+                println!("[ERROR]: {:?}", err);
                 break;
             }
         }
@@ -91,7 +91,7 @@ fn process_input(input: &str, session: &mut SessionHistory, pretty_print: bool) 
 
         "DELETE" => send_request("DELETE", url, None, session, pretty_print),
         _ => {
-            println!("Invalid method: {}", method);
+            println!("[ERROR]: Invalid method: {}", method);
         }
     }
 }
@@ -103,7 +103,11 @@ fn send_request(
     session: &mut SessionHistory,
     pretty_print: bool,
 ) {
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(session.response_timeout)
+        .build()
+        .unwrap();
+
     let start_time = Instant::now();
 
     let request = match method {
@@ -113,7 +117,7 @@ fn send_request(
         "PATCH" => client.patch(url),
         "DELETE" => client.delete(url),
         _ => {
-            println!("Invalid method: {}", method);
+            println!("[ERROR]: Invalid method: {}", method);
             return;
         }
     };
@@ -159,7 +163,19 @@ fn send_request(
             pprint(json, pretty_print);
         }
         Err(err) => {
-            println!("Error: {}", err);
+            let e = Colour::Red.dimmed().paint("[ERROR]");
+
+            if err.is_timeout() {
+                println!(
+                    "{}: Response time exceeded the specified timeout of {} seconds.",
+                    e,
+                    session.response_timeout.as_secs()
+                );
+            } else if err.is_decode() {
+                println!("{}: Failed to decode response.", e);
+            } else {
+                println!("{}: {}", e, err);
+            }
         }
     }
 }
@@ -176,7 +192,7 @@ fn handle_status_code(status: StatusCode) -> String {
             format!("Unauthorized! Please provide credentials.")
         }
         StatusCode::INTERNAL_SERVER_ERROR => {
-            format!("Internal Server Error! Retrying request...")
+            format!("Internal Server Error! Retry request...")
         }
         _ => format!(""),
     };
@@ -198,7 +214,6 @@ fn handle_status_code(status: StatusCode) -> String {
         p
     )
 }
-
 
 fn format_duration(duration: std::time::Duration) -> String {
     let secs = duration.as_secs();
@@ -255,7 +270,7 @@ fn pprint(json: Value, table: bool) {
     } else {
         match serde_json::to_string_pretty(&json) {
             Ok(result) => println!("{result}"),
-            Err(e) => print!("{e}"),
+            Err(e) => print!("[ERROR]: {e}"),
         }
     }
 }
@@ -277,12 +292,21 @@ fn show_history(session: &SessionHistory) {
 #[derive(FromArgs)]
 /// Simple command-line application that allows users to send HTTP requests and view the response, to test APIs.
 struct Args {
+    #[argh(option, short = 't', description = "response timeout in seconds (default: 30s)")]
+    response_timeout: Option<u64>,
     #[argh(switch, short = 'j', description = "outputs in JSON")]
     json: bool,
 }
 
 fn main() {
     let args: Args = argh::from_env();
+
     let mut session = SessionHistory::default();
+
+    session.response_timeout = match args.response_timeout {
+        Some(timeout_secs) => Duration::from_secs(timeout_secs),
+        None => Duration::from_secs(30), // Default timeout of 30 seconds
+    };
+
     repl(&mut session, !args.json);
 }
