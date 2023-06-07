@@ -34,9 +34,9 @@ A simple command-line application that allows users to send HTTP requests and vi
 
 - [ ] Request Headers: Allow users to specify custom headers for their requests.
 - [ ] Authentication: Support different authentication methods like Basic Authentication, API keys, OAuth, etc.
-- [ ] Request Timeout: Allow users to set a timeout for their requests.
-- [ ] Response Status Codes: Display the HTTP status code along with the response. This will provide more context about the success or failure of the request.
-- [ ] Response Time: Show the time taken to receive the response from the server.
+- [x] Request Timeout: Allow users to set a timeout for their requests.
+- [x] Response Status Codes: Display the HTTP status code along with the response. This will provide more context about the success or failure of the request.
+- [x] Response Time: Show the time taken to receive the response from the server.
 - [ ] Environment Variables: Support the use of environment variables, allowing users to store and reference variables like API keys or base URLs without hardcoding them in commands.
 - [ ] Batch Requests: Allow users to send multiple requests in a batch, either by reading a file containing a list of requests or by providing a formatted input.
 - [ ] File Upload: Enable users to upload files as part of their requests, such as sending images, documents, or other binary data to the server.
