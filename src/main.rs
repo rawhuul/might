@@ -2,14 +2,14 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::time::Instant;
 
-use ansi_term;
+use ansi_term::enable_ansi_support;
 use ansi_term::Colour;
 use argh::FromArgs;
 use json_to_table::json_to_table;
 use reqwest::blocking::Client;
 use reqwest::StatusCode;
-use rustyline::{config::Configurer, error::ReadlineError, DefaultEditor, Result};
-use serde_json::{json, Value};
+use rustyline::{config::Configurer, error::ReadlineError, DefaultEditor};
+use serde_json::{Value};
 use tabled::settings::{style::RawStyle, Color, Style};
 
 #[derive(Default)]
@@ -24,7 +24,7 @@ fn repl(session: &mut SessionHistory, pretty_print: bool) {
         println!("No previous history.");
     }
 
-    if ansi_term::enable_ansi_support().is_err() {
+    if enable_ansi_support().is_err() {
         println!("Your system doesn't support ansi_colors.");
     }
 
@@ -254,7 +254,7 @@ fn pprint(json: Value, table: bool) {
         println!("{}", json_to_table(&json).with(style));
     } else {
         match serde_json::to_string_pretty(&json) {
-            Ok(result) => print!("{result}"),
+            Ok(result) => println!("{result}"),
             Err(e) => print!("{e}"),
         }
     }
