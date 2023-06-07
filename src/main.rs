@@ -63,7 +63,6 @@ impl Cache {
 
 struct Session {
     cache: Cache,
-    cache_size: NonZeroUsize,
     history: HashMap<String, Value>,
     pretty_print: bool,
     response_timeout: Duration,
@@ -72,17 +71,10 @@ struct Session {
 impl Session {
     fn new(pretty_print: bool, response_timeout: Option<u64>, cache_size: Option<u64>) -> Self {
         Session {
-            cache: Cache::new(100, Duration::from_secs(5)),
-            cache_size: match  cache_size {
-                Some(size) => NonZeroUsize::new(size.try_into().unwrap()).unwrap(),
-                None => NonZeroUsize::new(100).unwrap()
-            },
+            cache: Cache::new(cache_size.unwrap_or(100).try_into().unwrap(), Duration::from_secs(5)),
             history: HashMap::new(),
             pretty_print,
-            response_timeout: match response_timeout {
-                Some(timeout_secs) => Duration::from_secs(timeout_secs),
-                None => Duration::from_secs(30), // Default timeout of 30 seconds
-            },
+            response_timeout: Duration::from_secs(response_timeout.unwrap_or(30))
         }
     }
 
@@ -234,6 +226,17 @@ fn send_request(method: &str, url: &str, body: Option<String>, session: &mut Ses
                 format_response_size(response.content_length())
             );
             println!("{}", handle_status_code(response.status()));
+
+            let content_type = response.headers().get(reqwest::header::CONTENT_TYPE).and_then(
+                |value| value.to_str().ok()
+                ).unwrap_or("");
+
+            if content_type.contains("text/html") {
+                let html = response.text().unwrap();
+                println!("[INFO]: Response is in HTML format.\n");
+                println!("{}", html);
+                return;
+            }
 
             let json: Value;
 

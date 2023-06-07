@@ -40,7 +40,7 @@ A simple command-line application that allows users to send HTTP requests and vi
 - [ ] Environment Variables: Support the use of environment variables, allowing users to store and reference variables like API keys or base URLs without hardcoding them in commands.
 - [ ] Batch Requests: Allow users to send multiple requests in a batch, either by reading a file containing a list of requests or by providing a formatted input.
 - [ ] File Upload: Enable users to upload files as part of their requests, such as sending images, documents, or other binary data to the server.
-- [ ] Response Caching: Implement a caching mechanism to store responses locally. This can help speed up subsequent requests to the same endpoint, especially for APIs with frequently accessed data.
+- [x] Response Caching: Implement a caching mechanism to store responses locally. This can help speed up subsequent requests to the same endpoint, especially for APIs with frequently accessed data.
 
 ## Usage
 
