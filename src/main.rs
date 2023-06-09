@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
+use std::todo;
 
 use ansi_term::{enable_ansi_support, Colour};
 use argh::FromArgs;
@@ -66,21 +67,38 @@ struct Session {
     history: HashMap<String, Value>,
     pretty_print: bool,
     response_timeout: Duration,
+    headers: HashMap<String, String>,
 }
 
 impl Session {
     fn new(pretty_print: bool, response_timeout: Option<u64>, cache_size: Option<u64>) -> Self {
         Session {
-            cache: Cache::new(cache_size.unwrap_or(100).try_into().unwrap(), Duration::from_secs(5)),
+            cache: Cache::new(
+                cache_size.unwrap_or(100).try_into().unwrap(),
+                Duration::from_secs(5),
+            ),
             history: HashMap::new(),
             pretty_print,
-            response_timeout: Duration::from_secs(response_timeout.unwrap_or(30))
+            response_timeout: Duration::from_secs(response_timeout.unwrap_or(30)),
+            headers: HashMap::new(),
+        }
+    }
+
+    fn show_headers(&self) {
+        if self.headers.len() == 0 {
+            println!("[INFO]: No HEADERS :(");
+            return;
+        }
+
+        println!("Session Headers:\n");
+        for (header_name, header_content) in &self.headers {
+            println!("{header_name}: {header_content}");
         }
     }
 
     fn show_history(&self) {
         if self.history.len() == 0 {
-            println!("No History :(");
+            println!("[INFO]: No History :(");
             return;
         }
 
@@ -127,6 +145,7 @@ fn repl(session: &mut Session) {
 
                 match input {
                     "history" | "History" | "HISTORY" => session.show_history(),
+                    "headers" | "Headers" | "HEADERS" => session.show_headers(),
                     _ => {
                         process_input(input, session);
                     }
@@ -148,32 +167,50 @@ fn repl(session: &mut Session) {
 fn process_input(input: &str, session: &mut Session) {
     let parts: Vec<&str> = input.split(' ').collect();
 
-    if parts.len() != 2 {
-        println!("[ERROR]: Expected 2 arguments, found {}!", parts.len());
+    if parts[0] == "HEADER" {
+        print!("Content: ");
+        std::io::stdout().flush().unwrap();
+        let mut body = String::new();
+        std::io::stdin().read_line(&mut body).unwrap();
+
+        let body = body.trim().to_string();
+        session.headers.insert(parts[1].to_string(), body);
+        return;
+    }
+
+    if parts.len() != 3 {
+        println!("[ERROR]: Expected 3 arguments, found {}!", parts.len());
         return;
     }
 
     let method = parts[0];
-    let url = parts[1];
+    let header = session.headers.get(parts[1]).cloned();
+    let url = parts[2];
 
     match method {
-        "GET" => send_request("GET", url, None, session),
+        "GET" => send_request("GET", header, url, None, session),
         "POST" | "PUT" | "PATCH" => {
             print!("Body: ");
             std::io::stdout().flush().unwrap();
             let mut body = String::new();
             std::io::stdin().read_line(&mut body).unwrap();
-            send_request(method, url, Some(body), session);
+            send_request(method, header, url, Some(body), session);
         }
 
-        "DELETE" => send_request("DELETE", url, None, session),
+        "DELETE" => send_request("DELETE", header, url, None, session),
         _ => {
             println!("[ERROR]: Invalid method: {}", method);
         }
     }
 }
 
-fn send_request(method: &str, url: &str, body: Option<String>, session: &mut Session) {
+fn send_request(
+    method: &str,
+    header: Option<String>,
+    url: &str,
+    body: Option<String>,
+    session: &mut Session,
+) {
     session.cache.remove_expired_entries();
 
     let cache_key = format!("{} {}", method, url);
@@ -203,10 +240,11 @@ fn send_request(method: &str, url: &str, body: Option<String>, session: &mut Ses
         }
     };
 
-    let request = match body {
-        Some(body) => request.body(body),
-        None => request,
-    };
+    if header.is_some(){
+        todo!()
+    }
+
+    let request = request.body(body.unwrap_or_else(String::new));
 
     let response = request.send();
 
@@ -227,9 +265,11 @@ fn send_request(method: &str, url: &str, body: Option<String>, session: &mut Ses
             );
             println!("{}", handle_status_code(response.status()));
 
-            let content_type = response.headers().get(reqwest::header::CONTENT_TYPE).and_then(
-                |value| value.to_str().ok()
-                ).unwrap_or("");
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("");
 
             if content_type.contains("text/html") {
                 let html = response.text().unwrap();
@@ -374,11 +414,7 @@ struct Args {
         description = "response timeout in seconds (default: 30s)"
     )]
     response_timeout: Option<u64>,
-    #[argh(
-        option,
-        short = 'c',
-        description = "cache size (default: 100)"
-    )]
+    #[argh(option, short = 'c', description = "cache size (default: 100)")]
     cache_size: Option<u64>,
     #[argh(switch, short = 'j', description = "outputs in JSON (default: false)")]
     json: bool,
