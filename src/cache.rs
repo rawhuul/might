@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 
 pub struct Cache {
     cache: LruCache<String, (Value, Instant)>,
-    max_size: usize,
     max_age: Duration,
 }
 
@@ -13,7 +12,6 @@ impl Cache {
     pub fn new(max_size: usize, max_age: Duration) -> Self {
         Cache {
             cache: LruCache::new(NonZeroUsize::new(max_size).unwrap()),
-            max_size,
             max_age,
         }
     }
@@ -31,7 +29,7 @@ impl Cache {
         let timestamp = Instant::now();
         self.cache.put(key, (value, timestamp));
 
-        if self.cache.len() > self.max_size {
+        if self.cache.len() > self.cache.cap().get() {
             self.cache.pop_lru();
         }
     }

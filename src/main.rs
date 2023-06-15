@@ -7,6 +7,7 @@ use argh::FromArgs;
 use reqwest::{blocking::Client, header::HeaderMap};
 use rustyline::{config::Configurer, error::ReadlineError, DefaultEditor};
 use serde_json::Value;
+use std::borrow::Cow;
 use std::io::Write;
 use std::time::Instant;
 
@@ -37,7 +38,7 @@ fn repl(session: &mut Session) {
                     continue;
                 };
 
-                if input == "exit" || input == "EXIT" || input == "Exit" {
+                if input.eq_ignore_ascii_case("exit") {
                     println!("[INFO]: Goodbye!");
                     break;
                 }
@@ -88,43 +89,32 @@ fn process_input(input: &str, session: &mut Session) {
     let url = parts[2];
 
     match method {
-        "GET" => send_request("GET", header, url, None, session),
+        "GET" => send_request("GET", header, url, Cow::Borrowed(""), session),
         "POST" | "PUT" | "PATCH" => {
             print!("Body: ");
             std::io::stdout().flush().unwrap();
             let mut body = String::new();
             std::io::stdin().read_line(&mut body).unwrap();
-            send_request(method, header, url, Some(body), session);
+            send_request(method, header, url, body.trim().into(), session);
         }
 
-        "DELETE" => send_request("DELETE", header, url, None, session),
+        "DELETE" => send_request("DELETE", header, url, Cow::Borrowed(""), session),
         _ => {
             println!("[ERROR]: Invalid method: {}", method);
         }
     }
 }
 
-fn send_request(
-    method: &str,
-    header: &str,
-    url: &str,
-    body: Option<String>,
-    session: &mut Session,
-) {
+fn send_request(method: &str, header: &str, url: &str, body: Cow<str>, session: &mut Session) {
     session.cache.remove_expired_entries();
 
     let cache_key = format!("{} {}", method, url);
 
     if let Some(cached_response) = session.cache.get(&cache_key) {
         println!("[INFO] Using cached response");
-        session.printer.response(cached_response);
+        session.formatter.response(cached_response);
         return;
     }
-
-    let client = Client::builder()
-        .timeout(session.response_timeout)
-        .build()
-        .unwrap();
 
     let headers = if header != "{}" {
         match session.get_header(header) {
@@ -137,6 +127,11 @@ fn send_request(
     } else {
         HeaderMap::new()
     };
+
+    let client = Client::builder()
+        .timeout(session.response_timeout)
+        .build()
+        .unwrap();
 
     let request = match method {
         "GET" => client.get(url),
@@ -151,7 +146,7 @@ fn send_request(
     };
 
     let request = request.headers(headers);
-    let request = request.body(body.unwrap_or_default());
+    let request = request.body(body.to_string());
 
     let start_time = Instant::now();
 
@@ -159,9 +154,9 @@ fn send_request(
 
     match response {
         Ok(response) => {
-            session.printer.metadata(&response);
+            session.formatter.metadata(&response);
             session
-                .printer
+                .formatter
                 .time(Instant::now().duration_since(start_time));
 
             if response
@@ -187,7 +182,7 @@ fn send_request(
             let json: Value = response.json().unwrap();
             session.history.insert(cache_key.clone(), json.clone());
             session.cache.put(cache_key.clone(), json.clone());
-            session.printer.response(&json);
+            session.formatter.response(&json);
         }
         Err(err) => {
             let e = Colour::Red.dimmed().paint("[ERROR]");
@@ -214,7 +209,7 @@ struct Args {
     )]
     response_timeout: Option<u64>,
     #[argh(option, short = 'c', description = "cache size (default: 100)")]
-    cache_size: Option<u64>,
+    cache_size: Option<usize>,
     #[argh(switch, short = 'j', description = "outputs in JSON (default: false)")]
     json: bool,
 }
@@ -222,7 +217,9 @@ struct Args {
 fn main() {
     let args: Args = argh::from_env();
 
-    let mut session = Session::new(args.json, args.response_timeout, args.cache_size);
-
-    repl(&mut session);
+    repl(&mut Session::new(
+        args.json,
+        args.response_timeout,
+        args.cache_size,
+    ));
 }

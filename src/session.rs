@@ -9,20 +9,17 @@ use std::time::Duration;
 pub struct Session {
     pub cache: Cache,
     pub history: HashMap<String, Value>,
-    pub printer: Formatter,
+    pub formatter: Formatter,
     pub response_timeout: Duration,
     headers: HashMap<String, String>,
 }
 
 impl Session {
-    pub fn new(json: bool, response_timeout: Option<u64>, cache_size: Option<u64>) -> Self {
+    pub fn new(json: bool, response_timeout: Option<u64>, cache_size: Option<usize>) -> Self {
         Session {
-            cache: Cache::new(
-                cache_size.unwrap_or(100).try_into().unwrap(),
-                Duration::from_secs(5),
-            ),
+            cache: Cache::new(cache_size.unwrap_or(10), Duration::from_secs(5)),
             history: HashMap::new(),
-            printer: Formatter::new(json),
+            formatter: Formatter::new(json),
             response_timeout: Duration::from_secs(response_timeout.unwrap_or(30)),
             headers: HashMap::new(),
         }
