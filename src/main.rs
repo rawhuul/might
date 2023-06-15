@@ -7,6 +7,7 @@ use ansi_term::{enable_ansi_support, Colour};
 use argh::FromArgs;
 use json_to_table::json_to_table;
 use lru::LruCache;
+use reqwest::blocking::Response;
 use reqwest::{
     blocking::Client,
     header::{HeaderMap, HeaderName, HeaderValue},
@@ -68,20 +69,23 @@ impl Cache {
 struct Session {
     cache: Cache,
     history: HashMap<String, Value>,
-    pretty_print: bool,
+    printer: Printer,
     response_timeout: Duration,
     headers: HashMap<String, String>,
 }
 
 impl Session {
-    fn new(pretty_print: bool, response_timeout: Option<u64>, cache_size: Option<u64>) -> Self {
+    fn new(json: bool, response_timeout: Option<u64>, cache_size: Option<u64>) -> Self {
         Session {
             cache: Cache::new(
                 cache_size.unwrap_or(100).try_into().unwrap(),
                 Duration::from_secs(5),
             ),
             history: HashMap::new(),
-            pretty_print,
+            printer: Printer {
+                json,
+                ..Default::default()
+            },
             response_timeout: Duration::from_secs(response_timeout.unwrap_or(30)),
             headers: HashMap::new(),
         }
@@ -171,6 +175,137 @@ impl Session {
         }
 
         Ok(headers)
+    }
+}
+
+struct Printer {
+    time: bool,
+    size: bool,
+    status: bool,
+    version: bool,
+    header: bool,
+    json: bool,
+}
+
+impl Default for Printer {
+    fn default() -> Self {
+        Printer {
+            time: true,
+            size: true,
+            status: true,
+            version: false,
+            header: false,
+            json: false,
+        }
+    }
+}
+
+impl Printer {
+    fn metadata(&self, response: &Response) {
+        if self.status {
+            let status = response.status();
+            let p = match status {
+                StatusCode::OK => "Success!",
+                StatusCode::NOT_FOUND => "Resource Not Found!",
+                StatusCode::UNAUTHORIZED => "Unauthorized! Please provide credentials.",
+                StatusCode::INTERNAL_SERVER_ERROR => "Internal Server Error! Retry request...",
+                _ => "",
+            };
+
+            let s = status.to_string();
+
+            let status = match status.as_u16() {
+                200..=299 => Colour::Green.paint(s),
+                300..=399 => Colour::Cyan.paint(s),
+                400..=499 => Colour::Yellow.paint(s),
+                500..=599 => Colour::Red.paint(s),
+                _ => Colour::White.paint(s),
+            };
+
+            println!("{} {status} ({p})", Colour::White.bold().paint("Status:"));
+        }
+
+        if self.size {
+            let size = match response.content_length() {
+                Some(size) => {
+                    if size >= 1 << 30 {
+                        format!("{:.2} GB", size as f64 / (1 << 30) as f64)
+                    } else if size >= 1 << 20 {
+                        format!("{:.2} MB", size as f64 / (1 << 20) as f64)
+                    } else if size >= 1 << 10 {
+                        format!("{:.2} KB", size as f64 / (1 << 10) as f64)
+                    } else {
+                        format!("{} bytes", size)
+                    }
+                }
+                None => "Unknown".to_string(),
+            };
+
+            println!("{} {size}", Colour::White.bold().paint("Response Size:"));
+        }
+
+        if self.header {
+            println!("{}", Colour::White.bold().paint("Response Header:"));
+
+            for (name, value) in response.headers() {
+                println!("{}: {:?}", name, value);
+            }
+        }
+
+        if self.version {
+            println!(
+                "{} {:?}",
+                Colour::White.bold().paint("Version:"),
+                response.version()
+            );
+        }
+    }
+
+    fn time(&self, time: Duration) {
+        if self.time {
+            let secs = time.as_secs();
+            let millis = time.subsec_millis();
+
+            let time = if secs >= 60 {
+                let mins = secs / 60;
+                format!("{mins} min {}.{millis:03} s", secs % 60)
+            } else if secs > 0 {
+                format!("{secs}.{millis:03} s")
+            } else {
+                format!("{millis} ms")
+            };
+
+            println!("{} {time}", Colour::White.bold().paint("Response Time:"));
+        }
+    }
+
+    fn response(&self, json: &Value) {
+        if !self.json {
+            let mut style = RawStyle::from(Style::rounded());
+            style
+                .set_color_top(Color::FG_RED)
+                .set_color_bottom(Color::FG_CYAN)
+                .set_color_left(Color::FG_BLUE)
+                .set_color_right(Color::FG_GREEN)
+                .set_color_corner_top_left(Color::FG_BLUE)
+                .set_color_corner_top_right(Color::FG_RED)
+                .set_color_corner_bottom_left(Color::FG_CYAN)
+                .set_color_corner_bottom_right(Color::FG_GREEN)
+                .set_color_intersection_bottom(Color::FG_CYAN)
+                .set_color_intersection_top(Color::FG_RED)
+                .set_color_intersection_right(Color::FG_GREEN)
+                .set_color_intersection_left(Color::FG_BLUE)
+                .set_color_intersection(Color::FG_MAGENTA)
+                .set_color_horizontal(Color::FG_MAGENTA)
+                .set_color_vertical(Color::FG_MAGENTA);
+
+            println!("{}", json_to_table(&json).with(style));
+        } else {
+            match serde_json::to_string_pretty(&json) {
+                Ok(result) => println!("{result}"),
+                Err(e) => print!("[ERROR]: {e}"),
+            }
+        }
     }
 }
 
@@ -279,7 +414,7 @@ fn send_request(
 
     if let Some(cached_response) = session.cache.get(&cache_key) {
         println!("[INFO] Using cached response");
-        pprint(&cached_response, session.pretty_print);
+        session.printer.response(&cached_response);
         return;
     }
 
@@ -288,12 +423,16 @@ fn send_request(
         .build()
         .unwrap();
 
-    let headers = match session.get_header(header) {
-        Ok(x) => x,
-        Err(e) => {
-            println!("[ERROR]: {e}");
-            return;
+    let headers = if header != "{}" {
+        match session.get_header(header) {
+            Ok(x) => x,
+            Err(e) => {
+                println!("[ERROR]: {e}");
+                return;
+            }
         }
+    } else {
+        HeaderMap::new()
     };
 
     let request = match method {
@@ -317,157 +456,54 @@ fn send_request(
 
     match response {
         Ok(response) => {
-            let end_time = Instant::now();
-            let duration = end_time.duration_since(start_time);
+            session.printer.metadata(&response);
+            session
+                .printer
+                .time(Instant::now().duration_since(start_time));
 
-            println!(
-                "{} {}",
-                Colour::White.bold().paint("Response Time:"),
-                format_duration(duration)
-            );
-            println!(
-                "{} {}",
-                Colour::White.bold().paint("Response Size:"),
-                format_response_size(response.content_length())
-            );
-            println!("{}", handle_status_code(response.status()));
-
-            let content_type = response
+            if response
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok())
-                .unwrap_or("");
-
-            if content_type.contains("text/html") {
+                .unwrap_or("")
+                .contains("text/html")
+            {
                 let html = response.text().unwrap();
-                println!("[WARN]: Response is in HTML format.\n");
-                println!("{}", html);
+                print!("[WARN]: Response is in HTML format.\nDo you want to print it? [y/n]: ");
+                std::io::stdout().flush().unwrap();
+                let mut body = String::new();
+                std::io::stdin().read_line(&mut body).unwrap();
+
+                if body.trim().eq_ignore_ascii_case("y") {
+                    println!("{}", html);
+                }
+
                 return;
             }
 
-            let json: Value;
-
-            match response.json() {
-                Ok(x) => json = x,
+            let json: Value = match response.json() {
+                Ok(x) => x,
                 Err(e) => {
                     println!("{e}");
                     return;
                 }
-            }
+            };
 
             session.history.insert(cache_key.clone(), json.clone());
             session.cache.put(cache_key.clone(), json.clone());
-
-            pprint(&json, session.pretty_print);
+            session.printer.response(&json);
         }
         Err(err) => {
             let e = Colour::Red.dimmed().paint("[ERROR]");
+            let s = session.response_timeout.as_secs();
 
             if err.is_timeout() {
-                println!(
-                    "{e}: Response time exceeded the specified timeout of {} seconds.",
-                    session.response_timeout.as_secs()
-                );
+                println!("{e}: Response time exceeded the specified timeout of {s} seconds.");
             } else if err.is_decode() {
                 println!("{e}: Failed to decode response.");
             } else {
                 println!("{e}: {err}");
             }
-        }
-    }
-}
-
-fn handle_status_code(status: StatusCode) -> String {
-    let p = match status {
-        StatusCode::OK => {
-            format!("Success!")
-        }
-        StatusCode::NOT_FOUND => {
-            format!("Resource Not Found!")
-        }
-        StatusCode::UNAUTHORIZED => {
-            format!("Unauthorized! Please provide credentials.")
-        }
-        StatusCode::INTERNAL_SERVER_ERROR => {
-            format!("Internal Server Error! Retry request...")
-        }
-        _ => format!(""),
-    };
-
-    let s = format!("{}", status);
-
-    let status = match status.as_u16() {
-        200..=299 => Colour::Green.paint(s),
-        300..=399 => Colour::Cyan.paint(s),
-        400..=499 => Colour::Yellow.paint(s),
-        500..=599 => Colour::Red.paint(s),
-        _ => Colour::White.paint(s),
-    };
-
-    format!(
-        "{} {} ({})",
-        Colour::White.bold().paint("Status:"),
-        status,
-        p
-    )
-}
-
-fn format_duration(duration: std::time::Duration) -> String {
-    let secs = duration.as_secs();
-    let millis = duration.subsec_millis();
-
-    if secs >= 60 {
-        let mins = secs / 60;
-        format!("{} min {}.{:03} s", mins, secs % 60, millis)
-    } else if secs > 0 {
-        format!("{}.{:03} s", secs, millis)
-    } else {
-        format!("{} ms", millis)
-    }
-}
-
-fn format_response_size(size: Option<u64>) -> String {
-    match size {
-        Some(size) => {
-            if size >= 1 << 30 {
-                format!("{:.2} GB", size as f64 / (1 << 30) as f64)
-            } else if size >= 1 << 20 {
-                format!("{:.2} MB", size as f64 / (1 << 20) as f64)
-            } else if size >= 1 << 10 {
-                format!("{:.2} KB", size as f64 / (1 << 10) as f64)
-            } else {
-                format!("{} bytes", size)
-            }
-        }
-        None => "Unknown".to_string(),
-    }
-}
-
-fn pprint(json: &Value, table: bool) {
-    if table {
-        let mut style = RawStyle::from(Style::rounded());
-        style
-            .set_color_top(Color::FG_RED)
-            .set_color_bottom(Color::FG_CYAN)
-            .set_color_left(Color::FG_BLUE)
-            .set_color_right(Color::FG_GREEN)
-            .set_color_corner_top_left(Color::FG_BLUE)
-            .set_color_corner_top_right(Color::FG_RED)
-            .set_color_corner_bottom_left(Color::FG_CYAN)
-            .set_color_corner_bottom_right(Color::FG_GREEN)
-            .set_color_intersection_bottom(Color::FG_CYAN)
-            .set_color_intersection_top(Color::FG_RED)
-            .set_color_intersection_right(Color::FG_GREEN)
-            .set_color_intersection_left(Color::FG_BLUE)
-            .set_color_intersection(Color::FG_MAGENTA)
-            .set_color_horizontal(Color::FG_MAGENTA)
-            .set_color_vertical(Color::FG_MAGENTA);
-
-        println!("{}", json_to_table(&json).with(style));
-    } else {
-        match serde_json::to_string_pretty(&json) {
-            Ok(result) => println!("{result}"),
-            Err(e) => print!("[ERROR]: {e}"),
         }
     }
 }
@@ -490,7 +526,7 @@ struct Args {
 fn main() {
     let args: Args = argh::from_env();
 
-    let mut session = Session::new(!args.json, args.response_timeout, args.cache_size);
+    let mut session = Session::new(args.json, args.response_timeout, args.cache_size);
 
     repl(&mut session);
 }
