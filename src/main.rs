@@ -2,15 +2,18 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
-use std::todo;
 
 use ansi_term::{enable_ansi_support, Colour};
 use argh::FromArgs;
 use json_to_table::json_to_table;
 use lru::LruCache;
-use reqwest::{blocking::Client, StatusCode};
+use reqwest::{
+    blocking::Client,
+    header::{HeaderMap, HeaderName, HeaderValue},
+    StatusCode,
+};
 use rustyline::{config::Configurer, error::ReadlineError, DefaultEditor};
-use serde_json::Value;
+use serde_json::{from_str, Value};
 use tabled::settings::{style::RawStyle, Color, Style};
 
 struct Cache {
@@ -109,6 +112,66 @@ impl Session {
             println!("Request: {pretty_request}\nResponse: {pretty_json}\n");
         }
     }
+
+    fn set_header(&mut self, name: &str) {
+        if name.contains(|c: char| !c.is_alphanumeric()) {
+            println!("[ERROR]: Invalid header name! Only alphanumeric characters are allowed.");
+            return;
+        }
+
+        print!("Content: ");
+        std::io::stdout().flush().unwrap();
+        let mut body = String::new();
+        std::io::stdin().read_line(&mut body).unwrap();
+
+        let body = body.trim();
+
+        match from_str::<Value>(body) {
+            Ok(_) => {
+                self.headers.insert(name.to_string(), body.to_string());
+                println!("[INFO]: Header {} set successfully!", name);
+            }
+            Err(e) => {
+                println!("[ERROR]: Invalid JSON format: {e}");
+            }
+        }
+    }
+
+    fn get_header(&self, name: &str) -> Result<HeaderMap, String> {
+        let header = match self.headers.get(name) {
+            Some(x) => x,
+            None => return Err(format!("Header {name} doesn't exists.")),
+        };
+
+        let header_json: Value = match serde_json::from_str(header) {
+            Ok(x) => x,
+            Err(_) => return Err(format!("While converting to json.")),
+        };
+
+        let mut headers = HeaderMap::new();
+
+        if let Some(json_object) = header_json.as_object() {
+            for (k, v) in json_object {
+                let header_name = match HeaderName::from_bytes(k.as_bytes()) {
+                    Ok(x) => x,
+                    Err(_) => return Err(format!("Reading header {k}")),
+                };
+
+                let header_value = match v.as_str() {
+                    Some(x) => x,
+                    None => return Err(format!("Empty field for {k}")),
+                };
+                let header_value = match HeaderValue::from_str(header_value) {
+                    Ok(x) => x,
+                    Err(_) => return Err(format!("Invalid Header Value for {k}")),
+                };
+
+                headers.insert(header_name, header_value);
+            }
+        }
+
+        Ok(headers)
+    }
 }
 
 fn repl(session: &mut Session) {
@@ -168,14 +231,13 @@ fn process_input(input: &str, session: &mut Session) {
     let parts: Vec<&str> = input.split(' ').collect();
 
     if parts[0] == "HEADER" {
-        print!("Content: ");
-        std::io::stdout().flush().unwrap();
-        let mut body = String::new();
-        std::io::stdin().read_line(&mut body).unwrap();
-
-        let body = body.trim().to_string();
-        session.headers.insert(parts[1].to_string(), body);
-        return;
+        if parts.len() == 2 {
+            session.set_header(parts[1]);
+            return;
+        } else {
+            println!("[ERROR]: Expected 2 arguments, found {}!", parts.len());
+            return;
+        }
     }
 
     if parts.len() != 3 {
@@ -184,7 +246,7 @@ fn process_input(input: &str, session: &mut Session) {
     }
 
     let method = parts[0];
-    let header = session.headers.get(parts[1]).cloned();
+    let header = parts[1];
     let url = parts[2];
 
     match method {
@@ -206,7 +268,7 @@ fn process_input(input: &str, session: &mut Session) {
 
 fn send_request(
     method: &str,
-    header: Option<String>,
+    header: &str,
     url: &str,
     body: Option<String>,
     session: &mut Session,
@@ -226,7 +288,13 @@ fn send_request(
         .build()
         .unwrap();
 
-    let start_time = Instant::now();
+    let headers = match session.get_header(header) {
+        Ok(x) => x,
+        Err(e) => {
+            println!("[ERROR]: {e}");
+            return;
+        }
+    };
 
     let request = match method {
         "GET" => client.get(url),
@@ -240,11 +308,10 @@ fn send_request(
         }
     };
 
-    if header.is_some(){
-        todo!()
-    }
-
+    let request = request.headers(headers);
     let request = request.body(body.unwrap_or_else(String::new));
+
+    let start_time = Instant::now();
 
     let response = request.send();
 
@@ -273,7 +340,7 @@ fn send_request(
 
             if content_type.contains("text/html") {
                 let html = response.text().unwrap();
-                println!("[INFO]: Response is in HTML format.\n");
+                println!("[WARN]: Response is in HTML format.\n");
                 println!("{}", html);
                 return;
             }
