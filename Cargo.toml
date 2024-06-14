@@ -1,5 +1,5 @@
 [package]
-name = "may"
+name = "might"
 version = "0.2.0"
 edition = "2021"
 description = "A CLI application for testing REST APIs"
