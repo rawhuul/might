@@ -7,7 +7,7 @@ readme = "README.md"
 homepage = "https://github.com/basicfunc/may"
 repository = "https://github.com/basicfunc/may"
 license-file = "LICENSE"
-keywords = ["api", "testing", "development", "backend", "rest-api", "developer-tools", "tools"]
+keywords = ["api", "testing", "tools", "rest-api", "developer-tools"]
 categories = ["command-line-utilities"]
 
 [dependencies]
