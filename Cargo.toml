@@ -2,20 +2,13 @@
 name = "might"
 version = "0.2.0"
 edition = "2021"
-description = "A CLI application for testing REST APIs"
+description = "Automated testing REST APIs"
 readme = "README.md"
-homepage = "https://github.com/basicfunc/may"
-repository = "https://github.com/basicfunc/may"
+homepage = "https://github.com/basicfunc/might"
+repository = "https://github.com/basicfunc/might"
 license-file = "LICENSE"
 keywords = ["api", "testing", "tools", "rest-api", "developer-tools"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-ansi_term = "0.12.1"
-argh = "0.1.10"
-json_to_table = { version = "0.5.0", features = ["color"] }
-lru = "0.10.0"
-reqwest = { version = "0.11.18", features = ["blocking", "json"] }
-rustyline = { version = "11.0.0", features = ["case_insensitive_history_search", "derive", "with-fuzzy"] }
-serde_json = "1.0.96"
-tabled = { version = "0.12.1", features = ["color"] }
+minreq = { version = "2.11.2", features = ["https-rustls-probe"] }

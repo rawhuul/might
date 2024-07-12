@@ -1,0 +1,56 @@
+# Custom MIG File Example
+# Each test case starts with a 'TestCase' keyword followed by relevant details.
+
+TestCase: Example Test Case 1
+Description: Test case for verifying the GET endpoint of the Example API
+Author: John Doe
+Method: PUT
+URL: https://api.example.com/data
+StatusCode: 400
+
+# Headers
+Headers:
+  Content-Type: application/json
+  Authorization: Bearer example_token
+  Custom-Header: CustomValue
+
+# Payload (only for POST, PUT, PATCH methods)
+Payload:
+  key1: value1
+  key2: value2
+
+# Assertions
+Assertions:
+  JSONPathExists: $.data.items
+  JSONPathValue: $.data.items[0].id == 123
+  JSONPathValue: $.data.items[0].name == "Example Item"
+  HeaderExists: Content-Type
+  HeaderValue: Content-Type == application/json
+
+---
+
+TestCase: Example Test Case 2
+Description: Test case for verifying another GET endpoint
+Author: John Doe
+Method: GET
+URL: https://api.example.com/data2
+StatusCode: 200
+
+# Headers
+Headers:
+  Content-Type: application/json
+  Authorization: Bearer example_token
+  Custom-Header: CustomValue
+
+# Payload (only for POST, PUT, PATCH methods)
+Payload:
+  key1: value1
+  key2: value2
+
+# Assertions
+Assertions:
+  JSONPathExists: $.data.items
+  JSONPathValue: $.data.items[0].id == 456
+  JSONPathValue: $.data.items[0].name == "Another Item"
+  HeaderExists: Content-Type
+  HeaderValue: Content-Type == application/json
