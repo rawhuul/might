@@ -1,9 +1,9 @@
-use parser::MIG;
-
-mod parser;
+use might::Parser;
 
 fn main() {
     let input = include_str!("../example.mig");
 
-    _ = MIG::parse(input).unwrap();
+    let tests = Parser::parse(input).unwrap();
+
+    tests.spawn();
 }

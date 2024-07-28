@@ -1,9 +1,43 @@
+use minreq::{get, Method, Request};
 use std::{collections::HashMap, error::Error, ops::Not};
+pub struct TestCases(Vec<TestCase>);
 
-pub struct MIG(Vec<TestCase>);
+impl TestCases {
+    pub fn spawn(&self) {
+        let Self(testcases) = self;
 
-impl MIG {
-    pub fn parse(input: &str) -> Result<Self, Box<dyn Error>> {
+        for testcase in testcases {
+            let TestCase {
+                name,
+                description,
+                author,
+                method,
+                url,
+                status_code,
+                headers,
+                payload,
+                assertions,
+            } = testcase;
+
+            let Headers(headers) = headers;
+            let Payload(payload) = payload;
+
+            println!("-- Test: {}", name);
+            println!("-- Description: {}", description);
+
+            if let Some(author) = author {
+                println!("-- Author: {}", author);
+            }
+
+            let request = Request::new(method.clone(), url);
+        }
+    }
+}
+
+pub struct Parser;
+
+impl Parser {
+    pub fn parse(input: &str) -> Result<TestCases, Box<dyn Error>> {
         let input = filter_out_comments(input);
 
         let raw_testcases: Vec<&str> = input
@@ -14,16 +48,14 @@ impl MIG {
             })
             .collect();
 
-        let mut testcases: Vec<TestCase> = vec![];
+        let testcases: Result<Vec<TestCase>, _> =
+            raw_testcases.into_iter().map(TestCase::parse).collect();
 
-        for raw_testcase in raw_testcases {
-            let testcase = TestCase::parse(raw_testcase)?;
-            testcases.push(testcase);
-        }
+        let testcases = testcases?;
 
-        println!("{testcases:#?}");
+        // println!("{testcases:#?}");
 
-        Ok(Self(vec![]))
+        Ok(TestCases(testcases))
     }
 }
 
@@ -54,7 +86,7 @@ impl TestCase {
             name: String::new(),
             author: None,
             description: String::new(),
-            method: Method::NONE,
+            method: Method::Custom("".to_owned()),
             url: String::new(),
             status_code: 0,
             headers: Headers::new(),
@@ -79,7 +111,7 @@ impl TestCase {
                         ("author", value) => res.author = Some(value.into()),
                         ("url", value) => res.url = value.into(),
                         ("statuscode", value) => res.status_code = value.parse::<u16>()?,
-                        ("method", value) => res.method = Method::parse(value)?,
+                        ("method", value) => res.method = parse_method(value)?,
                         ("headers", _) => {
                             let headers = Headers::parse(input)?;
                             skip = headers.len();
@@ -107,36 +139,18 @@ impl TestCase {
     }
 }
 
-#[derive(Debug)]
-enum Method {
-    POST,
-    PUT,
-    PATCH,
-    GET,
-    DELETE,
-    UPDATE,
-    HEAD,
-    TRACE,
-    OPTIONS,
-    CONNECT,
-    NONE,
-}
-
-impl Method {
-    fn parse(input: &str) -> Result<Self, Box<dyn Error>> {
-        match input.trim().to_uppercase().as_str() {
-            "GET" => Ok(Self::GET),
-            "POST" => Ok(Self::POST),
-            "PUT" => Ok(Self::PUT),
-            "PATCH" => Ok(Self::PATCH),
-            "DELETE" => Ok(Self::DELETE),
-            "UPDATE" => Ok(Self::UPDATE),
-            "HEAD" => Ok(Self::HEAD),
-            "TRACE" => Ok(Self::TRACE),
-            "OPTIONS" => Ok(Self::OPTIONS),
-            "CONNECT" => Ok(Self::CONNECT),
-            x => Err(format!("Method \"{x}\" is not supported").into()),
-        }
+fn parse_method(input: &str) -> Result<Method, Box<dyn Error>> {
+    match input.trim().to_uppercase().as_str() {
+        "GET" => Ok(Method::Get),
+        "POST" => Ok(Method::Post),
+        "PUT" => Ok(Method::Put),
+        "PATCH" => Ok(Method::Patch),
+        "DELETE" => Ok(Method::Delete),
+        "HEAD" => Ok(Method::Head),
+        "TRACE" => Ok(Method::Trace),
+        "OPTIONS" => Ok(Method::Options),
+        "CONNECT" => Ok(Method::Connect),
+        x => Err(format!("Method \"{x}\" is not supported").into()),
     }
 }
 

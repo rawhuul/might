@@ -4,8 +4,8 @@
 TestCase: Example Test Case 1
 Description: Test case for verifying the GET endpoint of the Example API
 Author: John Doe
-Method: PUT
-URL: https://api.example.com/data
+Method: GET
+URL: https://google.com/
 StatusCode: 400
 
 # Headers
@@ -33,7 +33,7 @@ TestCase: Example Test Case 2
 Description: Test case for verifying another GET endpoint
 Author: John Doe
 Method: GET
-URL: https://api.example.com/data2
+URL: https://example.com/
 StatusCode: 200
 
 # Headers
