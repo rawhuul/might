@@ -5,5 +5,7 @@ fn main() {
 
     let tests = Parser::parse(input).unwrap();
 
-    tests.spawn();
+    let res = tests.spawn();
+
+    res.iter().for_each(|r| println!("{r}"))
 }

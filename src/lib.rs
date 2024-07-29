@@ -45,51 +45,96 @@ mod error {
 
 use error::Error;
 
+mod result {
+    pub enum TestCaseResult {
+        Success { test: String },
+        Fail { test: String, remarks: Remarks },
+    }
+
+    impl std::fmt::Display for TestCaseResult {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                TestCaseResult::Success { test } => {
+                    write!(f, "✅ Successfully passed test: \"{test}\"")
+                }
+                TestCaseResult::Fail { test, remarks } => {
+                    write!(f, "❌ Failed test: \"{test}\", remarks: {remarks}")
+                }
+            }
+        }
+    }
+
+    pub enum Remarks {
+        StatusCodeFail { expected: u16, recived: u16 },
+        FailedRequest { error: minreq::Error },
+    }
+
+    impl std::fmt::Display for Remarks {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Remarks::StatusCodeFail { expected, recived } => {
+                    write!(f, "expected status code: {expected}, got: {recived}")
+                }
+                Remarks::FailedRequest { error } => write!(f, "failed due to error: {error}"),
+            }
+        }
+    }
+}
+
+use result::{Remarks, TestCaseResult};
+
 pub struct TestCases(Vec<TestCase>);
 
 impl TestCases {
-    pub fn spawn(&self) {
+    pub fn spawn(&self) -> Vec<TestCaseResult> {
         let Self(testcases) = self;
 
-        testcases.par_iter().for_each(|testcase| {
-            let TestCase {
-                name,
-                description,
-                author,
-                method,
-                url,
-                status_code,
-                headers,
-                payload: _,
-                assertions: _,
-            } = testcase;
+        testcases
+            .par_iter()
+            .map(|testcase| {
+                let TestCase {
+                    name,
+                    description: _,
+                    author: _,
+                    method,
+                    url,
+                    status_code,
+                    headers,
+                    payload: _,
+                    assertions: _,
+                } = testcase;
 
-            let Headers(headers) = headers;
+                let Headers(headers) = headers;
 
-            println!("-- Test: {}", name);
-            println!("-- Description: {}", description);
+                let request = Request::new(method.clone(), url).with_headers(headers);
 
-            if let Some(author) = author {
-                println!("-- Author: {}", author);
-            }
+                let response = request.send();
 
-            let request = Request::new(method.clone(), url).with_headers(headers);
+                match response {
+                    Ok(res) => {
+                        let status_resp = res.status_code == status_code.0 as i32;
 
-            let response = request.send();
-
-            if let Ok(res) = response {
-                let status_resp = res.status_code == status_code.0 as i32;
-
-                if status_resp == false {
-                    println!(
-                        "-- Testcase failed. Expected reponse code: {}, but recieved {}",
-                        status_code.0, res.status_code
-                    );
+                        if status_resp == false {
+                            TestCaseResult::Fail {
+                                test: name.to_string(),
+                                remarks: Remarks::StatusCodeFail {
+                                    expected: status_code.0,
+                                    recived: res.status_code as u16,
+                                },
+                            }
+                        } else {
+                            TestCaseResult::Success {
+                                test: name.to_string(),
+                            }
+                        }
+                    }
+                    Err(error) => TestCaseResult::Fail {
+                        test: name.to_string(),
+                        remarks: Remarks::FailedRequest { error },
+                    },
                 }
-            }
-
-            println!()
-        });
+            })
+            .collect()
     }
 }
 
@@ -138,11 +183,13 @@ struct TestCase {
 #[derive(Debug)]
 struct StatusCode(u16);
 
-impl StatusCode {
-    fn parse(input: &str) -> Result<Self, Error> {
-        let status_code = input
+impl TryFrom<&str> for StatusCode {
+    type Error = Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let status_code = value
             .parse::<u16>()
-            .map_err(|_| Error::FailedToParseStatusCode(input.into()))?;
+            .map_err(|_| Error::FailedToParseStatusCode(value.into()))?;
 
         Ok(Self(status_code))
     }
@@ -178,7 +225,7 @@ impl TestCase {
                         ("description", value) => res.description = value.into(),
                         ("author", value) => res.author = Some(value.into()),
                         ("url", value) => res.url = value.into(),
-                        ("statuscode", value) => res.status_code = StatusCode::parse(value)?,
+                        ("statuscode", value) => res.status_code = StatusCode::try_from(value)?,
                         ("method", value) => res.method = parse_method(value)?,
                         ("headers", _) => {
                             let headers = Headers::parse(input)?;
