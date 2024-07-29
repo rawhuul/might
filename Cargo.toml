@@ -12,3 +12,4 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 minreq = { version = "2.11.2", features = ["https-rustls-probe"] }
+rayon = "1.10.0"

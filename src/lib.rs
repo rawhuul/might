@@ -1,12 +1,57 @@
-use minreq::{get, Method, Request};
-use std::{collections::HashMap, error::Error, ops::Not};
+use minreq::{Method, Request};
+use rayon::prelude::*;
+use std::collections::HashMap;
+
+mod error {
+    #[derive(Debug, Clone)]
+    pub enum Error {
+        InvalidMethod(String),
+        InvalidSection(String),
+        FailedToParseStatusCode(String),
+        HeaderExpectsKV,
+        PayloadExpectsKV,
+        InvalidKeyInAssertions(String),
+    }
+
+    impl std::error::Error for Error {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            None
+        }
+
+        fn description(&self) -> &str {
+            "description() is deprecated; use Display"
+        }
+
+        fn cause(&self) -> Option<&dyn std::error::Error> {
+            self.source()
+        }
+    }
+
+    impl std::fmt::Display for Error {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Error::InvalidMethod(x) => write!(f, "Method: {x} is invalid"),
+                Error::InvalidSection(x) => write!(f, "Found {x} invalid section"),
+                Error::FailedToParseStatusCode(x) => write!(f, "Failed to parse status code: {x}"),
+                Error::HeaderExpectsKV => write!(f, "Header section expects key-value pair"),
+                Error::PayloadExpectsKV => write!(f, "Payload section expects key-value pair"),
+                Error::InvalidKeyInAssertions(x) => {
+                    write!(f, "Found invalid key {x} in assertions section")
+                }
+            }
+        }
+    }
+}
+
+use error::Error;
+
 pub struct TestCases(Vec<TestCase>);
 
 impl TestCases {
     pub fn spawn(&self) {
         let Self(testcases) = self;
 
-        for testcase in testcases {
+        testcases.par_iter().for_each(|testcase| {
             let TestCase {
                 name,
                 description,
@@ -15,12 +60,11 @@ impl TestCases {
                 url,
                 status_code,
                 headers,
-                payload,
-                assertions,
+                payload: _,
+                assertions: _,
             } = testcase;
 
             let Headers(headers) = headers;
-            let Payload(payload) = payload;
 
             println!("-- Test: {}", name);
             println!("-- Description: {}", description);
@@ -29,31 +73,42 @@ impl TestCases {
                 println!("-- Author: {}", author);
             }
 
-            let request = Request::new(method.clone(), url);
-        }
+            let request = Request::new(method.clone(), url).with_headers(headers);
+
+            let response = request.send();
+
+            if let Ok(res) = response {
+                let status_resp = res.status_code == status_code.0 as i32;
+
+                if status_resp == false {
+                    println!(
+                        "-- Testcase failed. Expected reponse code: {}, but recieved {}",
+                        status_code.0, res.status_code
+                    );
+                }
+            }
+
+            println!()
+        });
     }
 }
 
 pub struct Parser;
 
 impl Parser {
-    pub fn parse(input: &str) -> Result<TestCases, Box<dyn Error>> {
+    pub fn parse(input: &str) -> Result<TestCases, Error> {
         let input = filter_out_comments(input);
 
-        let raw_testcases: Vec<&str> = input
+        let testcases: Result<Vec<_>, Error> = input
             .split("---")
-            .filter_map(|s| {
+            .par_bridge()
+            .map(|s| {
                 let trimmed = s.trim();
-                trimmed.is_empty().not().then(|| trimmed)
+                TestCase::parse(trimmed)
             })
             .collect();
 
-        let testcases: Result<Vec<TestCase>, _> =
-            raw_testcases.into_iter().map(TestCase::parse).collect();
-
         let testcases = testcases?;
-
-        // println!("{testcases:#?}");
 
         Ok(TestCases(testcases))
     }
@@ -61,7 +116,7 @@ impl Parser {
 
 fn filter_out_comments(input: &str) -> String {
     input
-        .lines()
+        .par_lines()
         .filter(|line| !line.trim().starts_with('#'))
         .collect::<Vec<&str>>()
         .join("\n")
@@ -74,21 +129,34 @@ struct TestCase {
     author: Option<String>,
     method: Method,
     url: String,
-    status_code: u16,
+    status_code: StatusCode,
     headers: Headers,
     payload: Payload,
     assertions: Assertions,
 }
 
+#[derive(Debug)]
+struct StatusCode(u16);
+
+impl StatusCode {
+    fn parse(input: &str) -> Result<Self, Error> {
+        let status_code = input
+            .parse::<u16>()
+            .map_err(|_| Error::FailedToParseStatusCode(input.into()))?;
+
+        Ok(Self(status_code))
+    }
+}
+
 impl TestCase {
-    fn parse(input: &str) -> Result<Self, Box<dyn Error>> {
+    fn parse(input: &str) -> Result<Self, Error> {
         let mut res = TestCase {
             name: String::new(),
             author: None,
             description: String::new(),
             method: Method::Custom("".to_owned()),
             url: String::new(),
-            status_code: 0,
+            status_code: StatusCode(0),
             headers: Headers::new(),
             payload: Payload::new(),
             assertions: Default::default(),
@@ -110,7 +178,7 @@ impl TestCase {
                         ("description", value) => res.description = value.into(),
                         ("author", value) => res.author = Some(value.into()),
                         ("url", value) => res.url = value.into(),
-                        ("statuscode", value) => res.status_code = value.parse::<u16>()?,
+                        ("statuscode", value) => res.status_code = StatusCode::parse(value)?,
                         ("method", value) => res.method = parse_method(value)?,
                         ("headers", _) => {
                             let headers = Headers::parse(input)?;
@@ -127,7 +195,7 @@ impl TestCase {
                             skip = assertions.len();
                             res.assertions = assertions;
                         }
-                        (x, _) => return Err(format!("Unknow section \"{x}\"").into()),
+                        (x, _) => return Err(Error::InvalidSection(x.into())),
                     }
                 } else {
                     continue;
@@ -139,7 +207,7 @@ impl TestCase {
     }
 }
 
-fn parse_method(input: &str) -> Result<Method, Box<dyn Error>> {
+fn parse_method(input: &str) -> Result<Method, Error> {
     match input.trim().to_uppercase().as_str() {
         "GET" => Ok(Method::Get),
         "POST" => Ok(Method::Post),
@@ -150,7 +218,7 @@ fn parse_method(input: &str) -> Result<Method, Box<dyn Error>> {
         "TRACE" => Ok(Method::Trace),
         "OPTIONS" => Ok(Method::Options),
         "CONNECT" => Ok(Method::Connect),
-        x => Err(format!("Method \"{x}\" is not supported").into()),
+        x => Err(Error::InvalidMethod(x.into())),
     }
 }
 
@@ -166,7 +234,7 @@ impl Headers {
         self.0.len()
     }
 
-    fn parse(input: &str) -> Result<Self, Box<dyn Error>> {
+    fn parse(input: &str) -> Result<Self, Error> {
         let mut headers: HashMap<String, String> = HashMap::new();
         let mut in_header = false;
 
@@ -186,7 +254,7 @@ impl Headers {
                             let v = line[i + 1..].trim().to_string();
                             headers.insert(k, v);
                         }
-                        None => return Err(format!("Expected key-value pair").into()),
+                        None => return Err(Error::HeaderExpectsKV),
                     }
                 } else {
                     break;
@@ -210,7 +278,7 @@ impl Payload {
         self.0.len()
     }
 
-    fn parse(input: &str) -> Result<Self, Box<dyn Error>> {
+    fn parse(input: &str) -> Result<Self, Error> {
         let mut payloads: HashMap<String, String> = HashMap::new();
         let mut in_payload = false;
 
@@ -230,7 +298,7 @@ impl Payload {
                             let v = line[i + 1..].trim().to_string();
                             payloads.insert(k, v);
                         }
-                        None => return Err(format!("Expected key-value pair").into()),
+                        None => return Err(Error::PayloadExpectsKV),
                     }
                 } else {
                     break;
@@ -264,7 +332,7 @@ impl Assertions {
         self.json_path_exists.len() + self.json_path_value.len() + self.header_value.len() + 1
     }
 
-    fn parse(input: &str) -> Result<Self, Box<dyn Error>> {
+    fn parse(input: &str) -> Result<Self, Error> {
         let mut assertions = Self::new();
         let mut in_assertions = false;
 
@@ -286,11 +354,7 @@ impl Assertions {
                             ("jsonpathvalue", v) => assertions.json_path_value.push(v.into()),
                             ("headerexists", v) => assertions.header_exists = v.into(),
                             ("headervalue", v) => assertions.header_value.push(v.into()),
-                            (x, _) => {
-                                return Err(
-                                    format!("Unknown key: \"{x}\" found in assert section").into()
-                                )
-                            }
+                            (x, _) => return Err(Error::InvalidKeyInAssertions(x.into())),
                         }
                     }
                 } else {
@@ -312,20 +376,11 @@ impl Expr {
     }
 }
 
-impl From<&str> for Expr {
-    fn from(value: &str) -> Self {
-        Self(value.to_owned())
-    }
-}
-
-impl From<&String> for Expr {
-    fn from(value: &String) -> Self {
-        Self(value.to_owned())
-    }
-}
-
-impl Into<String> for Expr {
-    fn into(self) -> String {
-        self.0.to_string()
+impl<T> From<T> for Expr
+where
+    T: Into<String>,
+{
+    fn from(value: T) -> Self {
+        Self(value.into())
     }
 }
