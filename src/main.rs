@@ -7,5 +7,5 @@ fn main() {
 
     let res = tests.spawn();
 
-    res.iter().for_each(|r| println!("{r}"))
+    res.iter().for_each(|r| println!("{r}"));
 }
